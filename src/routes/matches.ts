@@ -17,6 +17,7 @@ import {
 import { fillWithBot } from '../services/bot.js';
 import {
   createMatch,
+  findMyOpenDuel,
   getMatchResult,
   joinMatch,
   serveQuestion,
@@ -85,6 +86,15 @@ matchRouter.post('/join', async (req, res, next) => {
     if (joined) {
       send(res, MatchSummary, await summarise(joined.id, userId));
       void notifyOpponentJoined(joined.id, userId);
+      return;
+    }
+
+    // Pool was empty. If this player already has a duel waiting, hand that one
+    // back rather than creating a second — one open duel at a time is what
+    // stops score cherry-picking (see createMatch).
+    const existing = await findMyOpenDuel(userId);
+    if (existing) {
+      send(res, MatchSummary, await summarise(existing.id, userId));
       return;
     }
 

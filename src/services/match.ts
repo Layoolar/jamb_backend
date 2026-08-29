@@ -113,10 +113,45 @@ async function pickQuestionIds(subjectId: string | null): Promise<string[]> {
 
 // -------------------------------------------------------------- create/join
 
+/**
+ * Creates a match.
+ *
+ * ONE OPEN DUEL AT A TIME. Without this, a player can create a duel, play it,
+ * look at their score, and only share the code from a run that went well —
+ * their best-of-N against an opponent's best-of-one. Worse, answer keys are
+ * released as soon as YOU finish, so every discarded reroll hands out ten
+ * answers with explanations, which farms the question bank.
+ *
+ * Holding only one open duel means getting out of a bad one costs a settled
+ * match on your record (via the bot), so nothing is quietly discardable.
+ * Practice mode is the free, record-neutral way to see answers.
+ */
 export async function createMatch(
   userId: string,
   opts: { subjectSlug?: string; mode: 'duel' | 'solo' },
 ) {
+  if (opts.mode === 'duel') {
+    const [open] = await db
+      .select({ id: matches.id, inviteCode: matches.inviteCode })
+      .from(matches)
+      .where(
+        and(
+          eq(matches.createdBy, userId),
+          eq(matches.mode, 'duel'),
+          eq(matches.status, 'awaiting_opponent'),
+          raw`${matches.expiresAt} > now()`,
+        ),
+      )
+      .limit(1);
+
+    if (open) {
+      throw conflict(
+        'duel_already_open',
+        'You already have a duel waiting for an opponent. Share its code, or play it out against the bot, before starting another.',
+      );
+    }
+  }
+
   const subject = await resolveSubject(opts.subjectSlug);
   const questionIds = await pickQuestionIds(subject?.id ?? null);
 
@@ -197,6 +232,23 @@ export async function joinMatch(
 }
 
 // -------------------------------------------------------------------- serve
+
+/** The one duel this player currently has waiting for an opponent, if any. */
+export async function findMyOpenDuel(userId: string) {
+  const [open] = await db
+    .select()
+    .from(matches)
+    .where(
+      and(
+        eq(matches.createdBy, userId),
+        eq(matches.mode, 'duel'),
+        eq(matches.status, 'awaiting_opponent'),
+        raw`${matches.expiresAt} > now()`,
+      ),
+    )
+    .limit(1);
+  return open ?? null;
+}
 
 export type ServedQuestionData = {
   qIndex: number;

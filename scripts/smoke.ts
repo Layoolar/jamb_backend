@@ -13,9 +13,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db, sql as pg } from '../src/db/index.js';
-import { passwordResets, questions, users } from '../src/db/schema.js';
+import { matches, passwordResets, questions, users } from '../src/db/schema.js';
 
 const BASE = process.env.SMOKE_BASE ?? 'http://localhost:4000';
 
@@ -360,6 +360,97 @@ async function main() {
     body: { token: 'short', platform: 'android' },
   });
   check('a malformed push token is rejected', pushBad.status === 400, pushBad.status);
+
+  console.log('\n-- reroll guard: one open duel at a time --');
+  const g = await signup('g');
+
+  const firstDuel = await call('/matches', {
+    method: 'POST',
+    token: g.token,
+    body: { subjectSlug: withBank.slug, mode: 'duel' },
+  });
+  check('first duel is created', firstDuel.status === 201, firstDuel.body);
+
+  const secondDuel = await call('/matches', {
+    method: 'POST',
+    token: g.token,
+    body: { subjectSlug: withBank.slug, mode: 'duel' },
+  });
+  check(
+    'a SECOND open duel is refused (blocks score cherry-picking)',
+    secondDuel.status === 409 && secondDuel.body?.code === 'duel_already_open',
+    secondDuel.body,
+  );
+
+  // Playing it out does not release the slot — the duel is still open, so the
+  // player still cannot reroll after seeing their score.
+  await play(g.token, firstDuel.body.matchId, { correct: false });
+  const afterPlaying = await call('/matches', {
+    method: 'POST',
+    token: g.token,
+    body: { subjectSlug: withBank.slug, mode: 'duel' },
+  });
+  check(
+    'still refused AFTER playing and seeing the score',
+    afterPlaying.status === 409,
+    afterPlaying.body,
+  );
+
+  // Quick-duel must not sneak past the guard. Joining SOMEONE ELSE'S open duel
+  // is fine and expected — as the responder you are playing against a score
+  // already committed, so there is nothing to cherry-pick. What must never
+  // happen is ending up with two open duels of your own.
+  await call('/matches/join', {
+    method: 'POST',
+    token: g.token,
+    body: { subjectSlug: withBank.slug },
+  });
+
+  const myOpen = await db
+    .select({ id: matches.id })
+    .from(matches)
+    .where(
+      and(
+        eq(matches.createdBy, g.user.id),
+        eq(matches.mode, 'duel'),
+        eq(matches.status, 'awaiting_opponent'),
+      ),
+    );
+  check(
+    'quick duel never leaves you holding two open duels of your own',
+    myOpen.length === 1,
+    { openDuelsCreatedByMe: myOpen.length },
+  );
+
+  // Resolving it costs a settled match, which is what makes rerolling expensive.
+  await call(`/matches/${firstDuel.body.matchId}/bot`, { method: 'POST', token: g.token });
+  const afterResolving = await call('/matches', {
+    method: 'POST',
+    token: g.token,
+    body: { subjectSlug: withBank.slug, mode: 'duel' },
+  });
+  check(
+    'a new duel is allowed once the previous one is settled',
+    afterResolving.status === 201,
+    afterResolving.body,
+  );
+
+  // Solo is the free, record-neutral way to see answers, so it is NOT limited.
+  const solo1 = await call('/matches', {
+    method: 'POST',
+    token: g.token,
+    body: { subjectSlug: withBank.slug, mode: 'solo' },
+  });
+  const solo2 = await call('/matches', {
+    method: 'POST',
+    token: g.token,
+    body: { subjectSlug: withBank.slug, mode: 'solo' },
+  });
+  check(
+    'practice mode is NOT limited (it is the pressure valve)',
+    solo1.status === 201 && solo2.status === 201,
+    { solo1: solo1.status, solo2: solo2.status },
+  );
 
   console.log('\n-- password reset --');
   const resetEmail = `smoke_reset_${Date.now()}@example.test`;
