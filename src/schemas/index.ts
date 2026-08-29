@@ -152,6 +152,8 @@ export const MatchSummary = z.object({
   inviteCode: z.string().nullable(),
   totalQuestions: z.number().int(),
   answeredCount: z.number().int(),
+  /** Their progress, never their score. Safe while sealed — see MatchResult. */
+  opponentAnsweredCount: z.number().int().nullable(),
   expiresAt: z.string(),
 
   /**

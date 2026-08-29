@@ -78,9 +78,13 @@ const summarise = async (matchId: string, userId: string) => {
     mode: m.mode,
     status: m.status,
     subject,
-    inviteCode: m.inviteCode,
+    // Same gate as MatchResult: the creator, and only while it can still be
+    // joined. A code for a duel nobody can enter is just noise.
+    inviteCode:
+      m.status === 'awaiting_opponent' && m.createdBy === userId ? m.inviteCode : null,
     totalQuestions: m.questionIds.length,
     answeredCount: me?.answeredCount ?? 0,
+    opponentAnsweredCount: them?.answeredCount ?? null,
     expiresAt: m.expiresAt.toISOString(),
     outcome,
     yourScore: revealed ? (me?.score ?? null) : null,
