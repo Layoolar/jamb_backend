@@ -1,0 +1,12 @@
+# Files that are executed on the Linux host MUST keep LF endings. Checked out
+# with CRLF on Windows and copied to the server, a shell script fails with
+# "bad interpreter: /usr/bin/env bash^M" and a systemd unit silently misparses.
+*.sh            text eol=lf
+*.service       text eol=lf
+Caddyfile       text eol=lf
+deploy/**       text eol=lf
+
+# Keep SQL migrations byte-stable so Drizzle's migration hashes don't shift
+# between a Windows and a Linux checkout.
+*.sql           text eol=lf
+drizzle/**      text eol=lf
