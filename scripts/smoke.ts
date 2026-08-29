@@ -185,12 +185,34 @@ async function main() {
   console.log('\n-- A plays (all correct) --');
   const aLast = await play(a.token, matchId, { correct: true });
   check('A finished the final question', aLast?.isFinalQuestion === true, aLast);
-  check('A scored above zero', (aLast?.runningScore ?? 0) > 0, aLast);
 
+  // The core fairness rule: finishing a duel tells you NOTHING until it settles.
+  // Seeing your own score early would let you judge the run and decide whether
+  // it was worth sharing; seeing the keys would leak the bank on every attempt.
   const midResult = await call(`/matches/${matchId}/result`, { token: a.token });
+  check('an unsettled duel is not revealed', midResult.body.revealed === false, midResult.body.revealed);
   check(
-    "opponent's answers hidden while they are unfinished",
-    midResult.body.questions.every((q: any) => q.theirs === null),
+    'your OWN score is hidden until the duel settles',
+    midResult.body.you.score === null,
+    midResult.body.you,
+  );
+  check(
+    'no answer keys before the duel settles',
+    midResult.body.questions.length === 0,
+    { questions: midResult.body.questions.length },
+  );
+  check(
+    'progress IS visible (how far along, not how well)',
+    midResult.body.you.answeredCount === 10,
+    midResult.body.you.answeredCount,
+  );
+  check(
+    'per-question feedback is withheld during a duel',
+    aLast?.revealed === false &&
+      aLast?.correctIndex === null &&
+      aLast?.explanation === null &&
+      aLast?.runningScore === null,
+    aLast,
   );
 
   console.log('\n-- B joins and plays (all wrong) --');
@@ -208,6 +230,7 @@ async function main() {
   console.log('\n-- settlement --');
   const result = await call(`/matches/${matchId}/result`, { token: a.token });
   check('match is settled', result.body.status === 'settled', result.body.status);
+  check('settling reveals the match', result.body.revealed === true);
   check('A is the winner', result.body.winnerId === a.user.id, {
     winnerId: result.body.winnerId,
     a: a.user.id,
@@ -360,6 +383,31 @@ async function main() {
     body: { token: 'short', platform: 'android' },
   });
   check('a malformed push token is rejected', pushBad.status === 400, pushBad.status);
+
+  console.log('\n-- practice reveals immediately (a duel does not) --');
+  const p = await signup('p');
+  const practice = await call('/matches', {
+    method: 'POST',
+    token: p.token,
+    body: { subjectSlug: withBank.slug, mode: 'solo' },
+  });
+  const practiceId = practice.body.matchId as string;
+
+  const pq = await call(`/matches/${practiceId}/question`, {
+    method: 'POST',
+    token: p.token,
+  });
+  const pKey = await keyFor(pq.body.questionId);
+  const pa = await call(`/matches/${practiceId}/answer`, {
+    method: 'POST',
+    token: p.token,
+    body: { questionId: pq.body.questionId, selectedIndex: pKey, flags: [] },
+  });
+
+  check('practice reveals the answer immediately', pa.body.revealed === true, pa.body);
+  check('practice returns the correct index', pa.body.correctIndex === pKey, pa.body);
+  check('practice returns a running score', typeof pa.body.runningScore === 'number', pa.body);
+  check('practice scores a correct answer above zero', (pa.body.points ?? 0) > 0, pa.body);
 
   console.log('\n-- reroll guard: one open duel at a time --');
   const g = await signup('g');

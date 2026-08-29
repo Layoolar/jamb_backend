@@ -394,11 +394,13 @@ async function loadPlayableMatch(tx: Tx, matchId: string, userId: string) {
 // ------------------------------------------------------------------- answer
 
 export type AnswerOutcome = {
-  isCorrect: boolean;
-  correctIndex: number;
+  /** False for a duel in progress — every field below it is then null. */
+  revealed: boolean;
+  isCorrect: boolean | null;
+  correctIndex: number | null;
   explanation: string | null;
-  points: number;
-  runningScore: number;
+  points: number | null;
+  runningScore: number | null;
   msTaken: number;
   wasLate: boolean;
   qIndex: number;
@@ -534,12 +536,17 @@ export async function submitAnswer(
       await maybeSettle(tx, matchId);
     }
 
+    // A duel reveals nothing until it settles. Scoring above is unaffected —
+    // the server knows the answer, the player simply is not told yet.
+    const reveal = match.mode === 'solo';
+
     return {
-      isCorrect,
-      correctIndex: q.correctIndex,
-      explanation: q.explanation,
-      points,
-      runningScore: updatedPlayer?.score ?? player.score + points,
+      revealed: reveal,
+      isCorrect: reveal ? isCorrect : null,
+      correctIndex: reveal ? q.correctIndex : null,
+      explanation: reveal ? q.explanation : null,
+      points: reveal ? points : null,
+      runningScore: reveal ? (updatedPlayer?.score ?? player.score + points) : null,
       msTaken,
       wasLate,
       qIndex: row.qIndex,
@@ -660,6 +667,19 @@ export async function getMatchResult(userId: string, matchId: string) {
   const theirs = players.find((p) => p.userId !== userId) ?? null;
   if (!mine) throw notFound('not_in_match', 'You are not part of that match.');
 
+  /**
+   * Nothing about a DUEL is revealed until it settles — not your own score, not
+   * the answer keys.
+   *
+   * This is what makes the challenge honest. If you could see your score before
+   * an opponent committed, you could judge the run and decide whether it was
+   * worth sharing, and the answer keys would leak on every abandoned attempt.
+   * Practice reveals as soon as you finish; there is no opponent to be fair to.
+   */
+  const youFinished = mine.finishedAt !== null;
+  const revealed =
+    match.mode === 'solo' ? youFinished : match.status === 'settled';
+
   const line = (p: (typeof players)[number]) => ({
     user: {
       id: p.userId,
@@ -667,20 +687,15 @@ export async function getMatchResult(userId: string, matchId: string) {
       avatarSeed: p.avatarSeed,
       isBot: p.isBot,
     },
-    score: p.score,
-    totalMs: p.totalMs,
+    score: revealed ? p.score : null,
+    totalMs: revealed ? p.totalMs : null,
+    // Progress is safe to show — it says how far along someone is, not how well.
     answeredCount: p.answeredCount,
     forfeited: p.forfeited,
     finished: p.finishedAt !== null,
   });
 
-  // Answer keys are released only once YOU have finished. The opponent's
-  // per-question answers additionally require that THEY have finished, so a
-  // fast player cannot see a slower one's choices mid-match.
-  const youFinished = mine.finishedAt !== null;
-  const theyFinished = theirs?.finishedAt != null;
-
-  const allAnswers = youFinished
+  const allAnswers = revealed
     ? await db
         .select()
         .from(answers)
@@ -688,7 +703,7 @@ export async function getMatchResult(userId: string, matchId: string) {
         .orderBy(asc(answers.qIndex))
     : [];
 
-  const qRows = youFinished
+  const qRows = revealed
     ? await db
         .select({
           id: questions.id,
@@ -713,7 +728,9 @@ export async function getMatchResult(userId: string, matchId: string) {
         }
       : null;
 
-  const questionLines = youFinished
+  // Once revealed, a duel is settled and a practice round is finished, so both
+  // sides are complete — there is no longer a half-finished case to guard.
+  const questionLines = revealed
     ? match.questionIds.map((qid, i) => {
         const q = byId.get(qid);
         return {
@@ -723,11 +740,9 @@ export async function getMatchResult(userId: string, matchId: string) {
           correctIndex: q?.correctIndex ?? -1,
           explanation: q?.explanation ?? null,
           yours: shape(allAnswers.find((a) => a.questionId === qid && a.userId === userId)),
-          theirs: theyFinished
-            ? shape(
-                allAnswers.find((a) => a.questionId === qid && a.userId !== userId),
-              )
-            : null,
+          theirs: shape(
+            allAnswers.find((a) => a.questionId === qid && a.userId !== userId),
+          ),
         };
       })
     : [];
@@ -745,6 +760,7 @@ export async function getMatchResult(userId: string, matchId: string) {
     isDraw: match.isDraw,
     isBotOpponent: match.isBotOpponent,
     winnerId: match.winnerId,
+    revealed,
     you: line(mine),
     opponent: theirs ? line(theirs) : null,
     questions: questionLines,

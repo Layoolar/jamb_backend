@@ -166,15 +166,24 @@ export const ServedQuestion = z.object({
 
 /**
  * The ONLY response schema in this codebase containing correctIndex.
- * It is reachable exclusively from the answer-submission handler, after the
- * server has recorded a decision for that question.
+ *
+ * In a DUEL every reveal field is null: you find out nothing until the match
+ * settles. Telling a player they got question 7 right lets them count their own
+ * hits and infer their score, which is the same information the score itself
+ * carries — so hiding only the number would be cosmetic.
+ *
+ * In PRACTICE everything is revealed immediately. That is the difference
+ * between the two modes: a duel is an exam, practice is a lesson.
  */
 export const AnswerResult = z.object({
-  isCorrect: z.boolean(),
-  correctIndex: z.number().int(),
+  /** False for a duel in progress; true for practice. */
+  revealed: z.boolean(),
+  isCorrect: z.boolean().nullable(),
+  correctIndex: z.number().int().nullable(),
   explanation: z.string().nullable(),
-  points: z.number().int(),
-  runningScore: z.number().int(),
+  points: z.number().int().nullable(),
+  runningScore: z.number().int().nullable(),
+  /** Always returned — it is your own timing, and it reveals nothing. */
   msTaken: z.number().int(),
   wasLate: z.boolean(),
   qIndex: z.number().int(),
@@ -185,8 +194,9 @@ export const AnswerResult = z.object({
 
 export const PlayerLine = z.object({
   user: PublicUser,
-  score: z.number().int(),
-  totalMs: z.number().int(),
+  /** Null until the match settles — see MatchResult.revealed. */
+  score: z.number().int().nullable(),
+  totalMs: z.number().int().nullable(),
   answeredCount: z.number().int(),
   forfeited: z.boolean(),
   finished: z.boolean(),
@@ -202,9 +212,15 @@ export const MatchResult = z.object({
   isDraw: z.boolean(),
   isBotOpponent: z.boolean(),
   winnerId: Uuid.nullable(),
+  /**
+   * True once scores and answer keys may be shown: a settled duel, or a
+   * finished practice round. While false, scores are null and `questions` is
+   * empty — nobody learns anything about a duel before it has a verdict.
+   */
+  revealed: z.boolean(),
   you: PlayerLine,
   opponent: PlayerLine.nullable(),
-  /** Per-question comparison. Answer keys are safe here — the match is over. */
+  /** Empty until `revealed`. Answer keys are safe here — the match is over. */
   questions: z.array(
     z.object({
       qIndex: z.number().int(),
