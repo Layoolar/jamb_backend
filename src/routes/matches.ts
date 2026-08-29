@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { and, desc, eq, inArray, or } from 'drizzle-orm';
 import { requireAuth, userIdOf } from '../auth/middleware.js';
 import { db } from '../db/index.js';
-import { matchPlayers, matches, subjects } from '../db/schema.js';
+import { matchPlayers, matches, subjects, users } from '../db/schema.js';
 import { notFound } from '../lib/errors.js';
 import { send } from '../lib/respond.js';
 import {
@@ -43,11 +43,35 @@ const summarise = async (matchId: string, userId: string) => {
       )[0] ?? null
     : null;
 
-  const [me] = await db
-    .select({ answeredCount: matchPlayers.answeredCount })
+  const players = await db
+    .select({
+      userId: matchPlayers.userId,
+      score: matchPlayers.score,
+      answeredCount: matchPlayers.answeredCount,
+      finishedAt: matchPlayers.finishedAt,
+      username: users.username,
+      isBot: users.isBot,
+    })
     .from(matchPlayers)
-    .where(and(eq(matchPlayers.matchId, matchId), eq(matchPlayers.userId, userId)))
-    .limit(1);
+    .innerJoin(users, eq(users.id, matchPlayers.userId))
+    .where(eq(matchPlayers.matchId, matchId));
+
+  const me = players.find((p) => p.userId === userId);
+  const them = players.find((p) => p.userId !== userId);
+
+  // Same gate as getMatchResult. A duel gives up nothing until it settles.
+  const revealed =
+    m.mode === 'solo' ? me?.finishedAt != null : m.status === 'settled';
+
+  const outcome = !revealed
+    ? null
+    : m.isDraw
+      ? ('draw' as const)
+      : m.winnerId === userId
+        ? ('won' as const)
+        : m.winnerId === null
+          ? null
+          : ('lost' as const);
 
   return {
     matchId: m.id,
@@ -58,6 +82,10 @@ const summarise = async (matchId: string, userId: string) => {
     totalQuestions: m.questionIds.length,
     answeredCount: me?.answeredCount ?? 0,
     expiresAt: m.expiresAt.toISOString(),
+    outcome,
+    yourScore: revealed ? (me?.score ?? null) : null,
+    opponentScore: revealed ? (them?.score ?? null) : null,
+    opponentName: them ? (them.isBot ? 'Bot' : them.username) : null,
   };
 };
 

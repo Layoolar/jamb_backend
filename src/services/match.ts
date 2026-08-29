@@ -762,6 +762,7 @@ export async function getMatchResult(userId: string, matchId: string) {
     matchId: match.id,
     status: match.status,
     mode: match.mode,
+    totalQuestions: match.questionIds.length,
     // Only the creator can invite, and only while the duel is still open.
     inviteCode:
       match.status === 'awaiting_opponent' && match.createdBy === userId

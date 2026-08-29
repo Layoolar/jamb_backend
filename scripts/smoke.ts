@@ -238,6 +238,18 @@ async function main() {
     aLast,
   );
 
+  // The match list must obey the same seal. Otherwise it is a side channel:
+  // finish a duel, glance at Home, read your score.
+  const listWhileSealed = await call('/matches', { token: a.token });
+  const sealedRow = listWhileSealed.body.matches.find((m: any) => m.matchId === matchId);
+  check(
+    'the match LIST hides scores for an unsettled duel too',
+    sealedRow?.yourScore === null &&
+      sealedRow?.opponentScore === null &&
+      sealedRow?.outcome === null,
+    sealedRow,
+  );
+
   console.log('\n-- B joins and plays (all wrong) --');
   const joined = await call('/matches/join', {
     method: 'POST',
@@ -270,6 +282,16 @@ async function main() {
   check(
     "opponent's answers now visible",
     result.body.questions.every((q: any) => q.theirs !== null),
+  );
+
+  const listAfter = await call('/matches', { token: a.token });
+  const settledRow = listAfter.body.matches.find((m: any) => m.matchId === matchId);
+  check(
+    'the match list shows the outcome once settled',
+    settledRow?.outcome === 'won' &&
+      typeof settledRow?.yourScore === 'number' &&
+      typeof settledRow?.opponentScore === 'number',
+    settledRow,
   );
 
   const me = await call('/auth/me', { token: a.token });

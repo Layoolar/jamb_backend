@@ -153,6 +153,16 @@ export const MatchSummary = z.object({
   totalQuestions: z.number().int(),
   answeredCount: z.number().int(),
   expiresAt: z.string(),
+
+  /**
+   * Outcome fields obey the SAME reveal rule as MatchResult — null until a duel
+   * settles. Without that, the match list would be a side channel around the
+   * sealed-score protection: finish a duel, glance at Home, read your score.
+   */
+  outcome: z.enum(['won', 'lost', 'draw']).nullable(),
+  yourScore: z.number().int().nullable(),
+  opponentScore: z.number().int().nullable(),
+  opponentName: z.string().nullable(),
 });
 
 /**
@@ -216,6 +226,8 @@ export const MatchResult = z.object({
   matchId: Uuid,
   status: z.enum(['awaiting_opponent', 'in_progress', 'settled', 'expired']),
   mode: z.enum(['duel', 'solo']),
+  /** Safe to expose while sealed — it is the length of the round, not a score. */
+  totalQuestions: z.number().int(),
   /** Present while a duel is still open, so the creator can share it. */
   inviteCode: z.string().nullable(),
   subject: z.object({ slug: z.string(), name: z.string() }).nullable(),
