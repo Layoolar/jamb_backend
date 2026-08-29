@@ -16,7 +16,6 @@
     "db:studio": "drizzle-kit studio",
     "seed": "tsx scripts/seed.ts",
     "import": "tsx scripts/import.ts",
-    "generate:questions": "tsx scripts/generate.ts",
     "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {

@@ -12,7 +12,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { and, asc, eq, isNull, ne, sql as raw } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne, sql as raw } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import {
   answers,
@@ -646,8 +646,7 @@ export async function getMatchResult(userId: string, matchId: string) {
           explanation: questions.explanation,
         })
         .from(questions)
-        .where(raw`${questions.id} = any(${match.questionIds})`)
-        .limit(match.questionIds.length)
+        .where(inArray(questions.id, match.questionIds))
     : [];
 
   const byId = new Map(qRows.map((q) => [q.id, q]));

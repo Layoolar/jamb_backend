@@ -12,7 +12,26 @@
  *         npx tsx scripts/smoke.ts
  */
 
+import { eq } from 'drizzle-orm';
+import { db, sql as pg } from '../src/db/index.js';
+import { questions } from '../src/db/schema.js';
+
 const BASE = process.env.SMOKE_BASE ?? 'http://localhost:4000';
+
+/**
+ * The API deliberately will not tell a client the answer before it commits, so
+ * the test reads the key straight from the database. That the test needs a
+ * back channel at all is the protection working.
+ */
+async function keyFor(questionId: string): Promise<number> {
+  const [q] = await db
+    .select({ correctIndex: questions.correctIndex })
+    .from(questions)
+    .where(eq(questions.id, questionId))
+    .limit(1);
+  if (!q) throw new Error(`question ${questionId} not found`);
+  return q.correctIndex;
+}
 
 let failures = 0;
 
@@ -99,12 +118,13 @@ async function play(
       );
     }
 
+    const key = await keyFor(q.body.questionId);
     const a = await call(`/matches/${matchId}/answer`, {
       method: 'POST',
       token,
       body: {
         questionId: q.body.questionId,
-        selectedIndex: opts.correct ? 0 : 3,
+        selectedIndex: opts.correct ? key : (key + 1) % 4,
         flags: [],
       },
     });
@@ -115,7 +135,7 @@ async function play(
       const dup = await call(`/matches/${matchId}/answer`, {
         method: 'POST',
         token,
-        body: { questionId: q.body.questionId, selectedIndex: 0, flags: [] },
+        body: { questionId: q.body.questionId, selectedIndex: key, flags: [] },
       });
       check('answering the same question twice is rejected', dup.status === 409, dup.body);
     }
@@ -279,10 +299,12 @@ async function main() {
       ? '\nALL CHECKS PASSED — Phase 2 exit gate met.\n'
       : `\n${failures} CHECK(S) FAILED\n`,
   );
+  await pg.end();
   process.exit(failures === 0 ? 0 : 1);
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error('\nsmoke test crashed:', e);
+  await pg.end().catch(() => {});
   process.exit(1);
 });

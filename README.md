@@ -26,17 +26,23 @@ npm run smoke          # Phase 2 exit gate, exits non-zero on failure
 
 ## Local Postgres
 
-Ports 5432 is occupied by pre-existing Postgres 13 and 18 installs on this
-machine, both requiring a password. Options, in order of least friction:
+**Ports 5432 and 5433 are both taken** by pre-existing native Postgres 13 and 18
+installs on this machine, both password-protected. The dev database therefore runs
+in a container on **55433** — a port far enough out to be unambiguous. Connecting
+to 5433 silently reaches the native instance instead and fails with a confusing
+`password authentication failed`.
 
-1. Use an existing instance — put its credentials in `DATABASE_URL` and create
-   the database: `createdb -U postgres sabipass`
-2. Run a disposable container on another port:
-   ```bash
-   docker run -d --name sabipass-pg -e POSTGRES_PASSWORD=sabipass_dev \
-     -e POSTGRES_DB=sabipass -p 5433:5432 postgres:18-alpine
-   # DATABASE_URL=postgres://postgres:sabipass_dev@localhost:5433/sabipass
-   ```
+```bash
+docker run -d --name sabipass-pg \
+  -e POSTGRES_PASSWORD=sabipass_dev -e POSTGRES_DB=sabipass \
+  -p 55433:5432 postgres:18-alpine
+
+# .env
+DATABASE_URL=postgres://postgres:sabipass_dev@127.0.0.1:55433/sabipass
+```
+
+Use `127.0.0.1`, not `localhost` — the latter can resolve to `::1` and pick a
+different listener than you expect when several are running.
 
 Docker is for local convenience only. Production runs Postgres on the host via
 the PGDG apt repo, with the app under systemd — one app and one database do not
@@ -114,7 +120,7 @@ GET    /matches/:id/result
 npm run seed                             # subjects + starter bank, idempotent
 npm run import -- content/file.csv       # past questions → status='draft'
 npm run import -- content/file.csv --live
-npm run generate:questions               # AI batch generation + self-check
+# npm run generate:questions          # Phase 5 — not built yet
 npm run db:studio                        # Drizzle Studio (content review UI)
 npm run smoke                            # Phase 2 exit gate
 ```
