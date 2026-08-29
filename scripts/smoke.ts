@@ -393,7 +393,9 @@ async function main() {
     .where(eq(users.email, resetEmail))
     .limit(1);
 
-  const planted = '13571357';
+  // Unique per run: token_hash is the primary key, so a fixed code collides
+  // with the row a previous run left behind for a different user.
+  const planted = String(Date.now()).slice(-8);
   await db.delete(passwordResets).where(eq(passwordResets.userId, target!.id));
   await db.insert(passwordResets).values({
     userId: target!.id,
@@ -432,14 +434,15 @@ async function main() {
   check('the new password works', newPw.status === 200, newPw.status);
 
   // An expired code must fail even though it was never used.
+  const expiredCode = String(Date.now() + 1).slice(-8);
   await db.insert(passwordResets).values({
     userId: target!.id,
-    tokenHash: createHash('sha256').update('24682468').digest('hex'),
+    tokenHash: createHash('sha256').update(expiredCode).digest('hex'),
     expiresAt: new Date(Date.now() - 1000),
   });
   const expired = await call('/auth/password/reset', {
     method: 'POST',
-    body: { code: '24682468', password: 'fourth-password-here' },
+    body: { code: expiredCode, password: 'fourth-password-here' },
   });
   check('an expired code is rejected', expired.status === 400, expired.status);
 

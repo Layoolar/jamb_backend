@@ -38,6 +38,9 @@ const Env = z.object({
    */
   RESEND_API_KEY: z.string().optional(),
   MAIL_FROM: z.string().optional(),
+
+  /** Optional. Unset means Sentry is a no-op — no account needed locally. */
+  SENTRY_DSN: z.string().optional(),
 });
 
 const parsed = Env.safeParse(process.env);

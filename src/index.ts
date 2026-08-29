@@ -1,3 +1,8 @@
+// Must run before express is imported so Sentry can instrument it.
+import { Sentry, initSentry } from './lib/sentry.js';
+
+const sentryOn = initSentry();
+
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
@@ -73,6 +78,7 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   }
 
   req.log?.error({ err }, 'unhandled error');
+  if (sentryOn) Sentry.captureException(err);
   res.status(500).json({
     code: 'server_error',
     message: 'Something went wrong on our side. Try again.',
@@ -81,7 +87,10 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
 
 const server = app.listen(env.PORT, () => {
   // eslint-disable-next-line no-console
-  console.log(`sabipass api listening on :${env.PORT} (${env.NODE_ENV})`);
+  console.log(
+    `sabipass api listening on :${env.PORT} (${env.NODE_ENV})` +
+      (sentryOn ? ' · sentry on' : ''),
+  );
   startCron();
 });
 
