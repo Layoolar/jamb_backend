@@ -31,6 +31,13 @@ const Env = z.object({
   APPLE_BUNDLE_ID: z.string().default('com.sabipass.app'),
 
   ANTHROPIC_API_KEY: z.string().optional(),
+
+  /**
+   * Transactional email (password reset only). With these unset, sends are
+   * logged instead of delivered — so local dev needs no credentials.
+   */
+  RESEND_API_KEY: z.string().optional(),
+  MAIL_FROM: z.string().optional(),
 });
 
 const parsed = Env.safeParse(process.env);

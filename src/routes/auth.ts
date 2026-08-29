@@ -1,3 +1,4 @@
+import { createHash, randomInt } from 'node:crypto';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { eq } from 'drizzle-orm';
@@ -6,12 +7,15 @@ import { verifyProviderIdToken } from '../auth/oauth.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { issueTokens, revokeAllForUser, rotateTokens } from '../auth/tokens.js';
 import { db } from '../db/index.js';
-import { accounts, users } from '../db/schema.js';
+import { isProd } from '../env.js';
+import { accounts, passwordResets, users } from '../db/schema.js';
 import { badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { send } from '../lib/respond.js';
+import { resetEmail, sendMail } from '../services/email.js';
 import { registerPushToken } from '../services/push.js';
 import {
   AuthResult,
+  ForgotBody,
   LoginBody,
   MeResult,
   Ok,
@@ -19,6 +23,7 @@ import {
   PublicUser,
   PushTokenBody,
   RefreshBody,
+  ResetBody,
   SignupBody,
   TokenResult,
   UsernameBody,
@@ -33,10 +38,17 @@ import {
 
 export const authRouter = Router();
 
-/** Credential endpoints are the ones worth brute-forcing, so they get limited. */
+/**
+ * Credential endpoints are the ones worth brute-forcing, so they get limited.
+ *
+ * Production keeps a genuinely strict ceiling. Development raises it so the
+ * smoke suite — which creates a dozen accounts per run — is not fighting the
+ * control it is meant to be testing around. The production value is the one
+ * that matters; do not "fix" a local 429 by lowering it.
+ */
 const strict = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 20,
+  limit: isProd ? 20 : 500,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { code: 'rate_limited', message: 'Too many attempts. Try again shortly.' },
@@ -171,6 +183,79 @@ authRouter.post('/username', requireAuth, async (req, res, next) => {
 
     await db.update(users).set({ username }).where(eq(users.id, userId));
     send(res, PublicUser, await publicUser(userId));
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Starts a password reset.
+ *
+ * ALWAYS answers ok, whether or not the email exists. Confirming which
+ * addresses have accounts turns this endpoint into an account-enumeration
+ * oracle, and the honest-looking "no account with that email" message is
+ * exactly the leak.
+ */
+authRouter.post('/password/forgot', strict, async (req, res, next) => {
+  try {
+    const { email } = ForgotBody.parse(req.body);
+    const user = await findByEmail(email);
+
+    if (user) {
+      // 8 digits: typeable on a phone, and rate limiting plus a 30-minute
+      // single-use window makes the search space irrelevant.
+      const code = String(randomInt(10_000_000, 99_999_999));
+
+      await db.delete(passwordResets).where(eq(passwordResets.userId, user.id));
+      await db.insert(passwordResets).values({
+        userId: user.id,
+        tokenHash: createHash('sha256').update(code).digest('hex'),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      });
+
+      const mail = resetEmail(code);
+      await sendMail({ to: user.email, ...mail });
+    }
+
+    send(res, Ok, { ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+authRouter.post('/password/reset', strict, async (req, res, next) => {
+  try {
+    const { code, password } = ResetBody.parse(req.body);
+    const tokenHash = createHash('sha256').update(code).digest('hex');
+
+    const [row] = await db
+      .select()
+      .from(passwordResets)
+      .where(eq(passwordResets.tokenHash, tokenHash))
+      .limit(1);
+
+    const invalid = badRequest(
+      'bad_reset_code',
+      'That code is wrong or has expired. Request a new one.',
+    );
+
+    if (!row || row.usedAt || row.expiresAt.getTime() <= Date.now()) throw invalid;
+
+    await db
+      .update(users)
+      .set({ passwordHash: await hashPassword(password) })
+      .where(eq(users.id, row.userId));
+
+    await db
+      .update(passwordResets)
+      .set({ usedAt: new Date() })
+      .where(eq(passwordResets.tokenHash, tokenHash));
+
+    // A password change must end every existing session. Otherwise a reset
+    // prompted by a suspected compromise leaves the intruder signed in.
+    await revokeAllForUser(row.userId);
+
+    send(res, Ok, { ok: true });
   } catch (e) {
     next(e);
   }

@@ -72,6 +72,15 @@ export const UsernameBody = z.object({
   username: Username,
 });
 
+export const ForgotBody = z.object({
+  email: Email,
+});
+
+export const ResetBody = z.object({
+  code: z.string().trim().min(4).max(32),
+  password: Password,
+});
+
 export const PushTokenBody = z.object({
   token: z.string().min(10).max(256),
   platform: z.enum(['ios', 'android']),

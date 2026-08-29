@@ -1,0 +1,35 @@
+# Caddy gets and renews TLS certificates automatically — no certbot, no cron,
+# no expiry outage. Replace the domain and email, then `systemctl reload caddy`.
+
+api.sabipass.com {
+	encode zstd gzip
+
+	# The app sets its own security headers via helmet; these cover what a
+	# reverse proxy is better placed to assert.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	reverse_proxy 127.0.0.1:4000 {
+		# The app trusts X-Forwarded-For for rate limiting (`trust proxy` is 1),
+		# so this must be the only hop in front of it.
+		header_up X-Real-IP {remote_host}
+
+		# A duel answer is a small, fast request. Failing quickly is better than
+		# a phone hanging on a stalled connection with a 15s clock running.
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 20s
+		}
+	}
+
+	log {
+		output file /var/log/caddy/sabipass-api.log {
+			roll_size 20mb
+			roll_keep 10
+		}
+	}
+}

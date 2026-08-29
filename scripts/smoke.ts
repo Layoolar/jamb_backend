@@ -12,9 +12,10 @@
  *         npx tsx scripts/smoke.ts
  */
 
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db, sql as pg } from '../src/db/index.js';
-import { questions } from '../src/db/schema.js';
+import { passwordResets, questions, users } from '../src/db/schema.js';
 
 const BASE = process.env.SMOKE_BASE ?? 'http://localhost:4000';
 
@@ -360,9 +361,91 @@ async function main() {
   });
   check('a malformed push token is rejected', pushBad.status === 400, pushBad.status);
 
+  console.log('\n-- password reset --');
+  const resetEmail = `smoke_reset_${Date.now()}@example.test`;
+  await call('/auth/signup', {
+    method: 'POST',
+    body: { email: resetEmail, password: 'first-password-here' },
+  });
+
+  const unknown = await call('/auth/password/forgot', {
+    method: 'POST',
+    body: { email: 'definitely-not-registered@example.test' },
+  });
+  check(
+    'forgot-password says ok for an UNKNOWN email (no account enumeration)',
+    unknown.status === 200 && unknown.body?.ok === true,
+    unknown.body,
+  );
+
+  const known = await call('/auth/password/forgot', {
+    method: 'POST',
+    body: { email: resetEmail },
+  });
+  check('forgot-password says ok for a known email', known.status === 200, known.body);
+
+  // The emailed code is not readable from here, so plant a known one directly.
+  // This exercises the reset endpoint's rules; the code-generation path is
+  // covered by the forgot-password checks above.
+  const [target] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, resetEmail))
+    .limit(1);
+
+  const planted = '13571357';
+  await db.delete(passwordResets).where(eq(passwordResets.userId, target!.id));
+  await db.insert(passwordResets).values({
+    userId: target!.id,
+    tokenHash: createHash('sha256').update(planted).digest('hex'),
+    expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+  });
+
+  const wrongCode = await call('/auth/password/reset', {
+    method: 'POST',
+    body: { code: '99999999', password: 'second-password-here' },
+  });
+  check('reset rejects a wrong code', wrongCode.status === 400, wrongCode.status);
+
+  const goodCode = await call('/auth/password/reset', {
+    method: 'POST',
+    body: { code: planted, password: 'second-password-here' },
+  });
+  check('reset accepts the real code', goodCode.status === 200, goodCode.body);
+
+  const replay = await call('/auth/password/reset', {
+    method: 'POST',
+    body: { code: planted, password: 'third-password-here' },
+  });
+  check('a reset code is single-use', replay.status === 400, replay.status);
+
+  const oldPw = await call('/auth/login', {
+    method: 'POST',
+    body: { email: resetEmail, password: 'first-password-here' },
+  });
+  check('the old password no longer works', oldPw.status === 401, oldPw.status);
+
+  const newPw = await call('/auth/login', {
+    method: 'POST',
+    body: { email: resetEmail, password: 'second-password-here' },
+  });
+  check('the new password works', newPw.status === 200, newPw.status);
+
+  // An expired code must fail even though it was never used.
+  await db.insert(passwordResets).values({
+    userId: target!.id,
+    tokenHash: createHash('sha256').update('24682468').digest('hex'),
+    expiresAt: new Date(Date.now() - 1000),
+  });
+  const expired = await call('/auth/password/reset', {
+    method: 'POST',
+    body: { code: '24682468', password: 'fourth-password-here' },
+  });
+  check('an expired code is rejected', expired.status === 400, expired.status);
+
   console.log(
     failures === 0
-      ? '\nALL CHECKS PASSED — Phase 2 + 4 backend gates met.\n'
+      ? '\nALL CHECKS PASSED — Phase 2 + 4 + 5 backend gates met.\n'
       : `\n${failures} CHECK(S) FAILED\n`,
   );
   await pg.end();

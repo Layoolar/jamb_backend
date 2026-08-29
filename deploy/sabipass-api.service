@@ -1,0 +1,51 @@
+[Unit]
+Description=SabiPass API
+Documentation=https://github.com/Layoolar/jamb_backend
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=sabipass
+Group=sabipass
+WorkingDirectory=/srv/sabipass/api
+
+# Secrets live here, root-owned, chmod 600. Never in this unit file — systemd
+# unit files are world-readable.
+EnvironmentFile=/etc/sabipass/api.env
+Environment=NODE_ENV=production
+
+ExecStart=/usr/bin/node dist/index.js
+
+Restart=always
+RestartSec=3
+# Don't thrash if the app is crash-looping on bad config.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sabipass-api
+
+# Give in-flight duels a moment to finish before the process dies.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Hardening. The app reads its code, writes nothing outside /tmp, and talks to
+# Postgres over a local socket or loopback.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+ReadWritePaths=/srv/sabipass/api
+
+[Install]
+WantedBy=multi-user.target
