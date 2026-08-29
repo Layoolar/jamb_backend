@@ -299,6 +299,21 @@ export const answers = pgTable(
   ],
 );
 
+export const pushTokens = pgTable(
+  'push_tokens',
+  {
+    token: text('token').primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    platform: text('platform').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index('push_tokens_user_idx').on(t.userId)],
+);
+
 export const userStats = pgTable('user_stats', {
   userId: uuid('user_id')
     .primaryKey()

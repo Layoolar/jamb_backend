@@ -72,6 +72,11 @@ export const UsernameBody = z.object({
   username: Username,
 });
 
+export const PushTokenBody = z.object({
+  token: z.string().min(10).max(256),
+  platform: z.enum(['ios', 'android']),
+});
+
 export const AuthResult = z.object({
   accessToken: z.string(),
   refreshToken: z.string(),
@@ -181,6 +186,9 @@ export const PlayerLine = z.object({
 export const MatchResult = z.object({
   matchId: Uuid,
   status: z.enum(['awaiting_opponent', 'in_progress', 'settled', 'expired']),
+  mode: z.enum(['duel', 'solo']),
+  /** Present while a duel is still open, so the creator can share it. */
+  inviteCode: z.string().nullable(),
   subject: z.object({ slug: z.string(), name: z.string() }).nullable(),
   isDraw: z.boolean(),
   isBotOpponent: z.boolean(),

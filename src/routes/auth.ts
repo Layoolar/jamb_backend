@@ -9,6 +9,7 @@ import { db } from '../db/index.js';
 import { accounts, users } from '../db/schema.js';
 import { badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { send } from '../lib/respond.js';
+import { registerPushToken } from '../services/push.js';
 import {
   AuthResult,
   LoginBody,
@@ -16,6 +17,7 @@ import {
   Ok,
   OAuthBody,
   PublicUser,
+  PushTokenBody,
   RefreshBody,
   SignupBody,
   TokenResult,
@@ -169,6 +171,16 @@ authRouter.post('/username', requireAuth, async (req, res, next) => {
 
     await db.update(users).set({ username }).where(eq(users.id, userId));
     send(res, PublicUser, await publicUser(userId));
+  } catch (e) {
+    next(e);
+  }
+});
+
+authRouter.post('/push-token', requireAuth, async (req, res, next) => {
+  try {
+    const { token, platform } = PushTokenBody.parse(req.body);
+    await registerPushToken(userIdOf(req), token, platform);
+    send(res, Ok, { ok: true });
   } catch (e) {
     next(e);
   }

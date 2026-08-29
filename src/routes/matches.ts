@@ -14,6 +14,7 @@ import {
   ServedQuestion,
   SubmitAnswerBody,
 } from '../schemas/index.js';
+import { fillWithBot } from '../services/bot.js';
 import {
   createMatch,
   getMatchResult,
@@ -21,6 +22,7 @@ import {
   serveQuestion,
   submitAnswer,
 } from '../services/match.js';
+import { notifyOpponentJoined, notifySettled } from '../services/notify.js';
 
 export const matchRouter = Router();
 
@@ -82,6 +84,7 @@ matchRouter.post('/join', async (req, res, next) => {
     const joined = await joinMatch(userId, body);
     if (joined) {
       send(res, MatchSummary, await summarise(joined.id, userId));
+      void notifyOpponentJoined(joined.id, userId);
       return;
     }
 
@@ -170,7 +173,39 @@ matchRouter.post('/:id/answer', async (req, res, next) => {
     const userId = userIdOf(req);
     const id = req.params.id as string;
     const body = SubmitAnswerBody.parse(req.body);
-    send(res, AnswerResult, await submitAnswer(userId, id, body));
+    const outcome = await submitAnswer(userId, id, body);
+
+    send(res, AnswerResult, outcome);
+
+    // After the response, and never awaited: the player should not wait on a
+    // push gateway to see their own result.
+    if (outcome.isFinalQuestion || outcome.forfeited) {
+      void notifySettled(id);
+    }
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Gives an unclaimed duel a bot opponent on demand. Offered by the waiting
+ * screen so a player is never stuck watching a spinner for lack of a userbase.
+ */
+matchRouter.post('/:id/bot', async (req, res, next) => {
+  try {
+    const userId = userIdOf(req);
+    const id = req.params.id as string;
+
+    const [match] = await db.select().from(matches).where(eq(matches.id, id)).limit(1);
+    if (!match) throw notFound('no_match', 'That match does not exist.');
+    if (match.createdBy !== userId) {
+      throw notFound('no_match', 'That match does not exist.');
+    }
+
+    await fillWithBot(id);
+    send(res, MatchSummary, await summarise(id, userId));
+
+    void notifySettled(id);
   } catch (e) {
     next(e);
   }

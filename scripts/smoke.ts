@@ -294,9 +294,75 @@ async function main() {
     quick.body,
   );
 
+  console.log('\n-- bot opponent --');
+  const f = await signup('f');
+  const botDuel = await call('/matches', {
+    method: 'POST',
+    token: f.token,
+    body: { subjectSlug: withBank.slug, mode: 'duel' },
+  });
+  const botMatchId = botDuel.body.matchId as string;
+
+  const preShare = await call(`/matches/${botMatchId}/result`, { token: f.token });
+  check(
+    'creator sees the invite code while the duel is open',
+    typeof preShare.body.inviteCode === 'string' && preShare.body.inviteCode.length > 0,
+    preShare.body.inviteCode,
+  );
+
+  await play(f.token, botMatchId, { correct: true });
+
+  const filled = await call(`/matches/${botMatchId}/bot`, {
+    method: 'POST',
+    token: f.token,
+  });
+  check('bot can be added to an unclaimed duel', filled.status === 200, filled.body);
+
+  const botResult = await call(`/matches/${botMatchId}/result`, { token: f.token });
+  check('match settled against the bot', botResult.body.status === 'settled', botResult.body.status);
+  check(
+    'opponent is flagged isBot so the UI can label it honestly',
+    botResult.body.opponent?.user?.isBot === true,
+    botResult.body.opponent?.user,
+  );
+  check(
+    'bot answered every question',
+    botResult.body.opponent?.answeredCount === 10,
+    botResult.body.opponent?.answeredCount,
+  );
+  check(
+    'bot timings look human (no sub-second answers)',
+    botResult.body.questions.every((q: any) => (q.theirs?.msTaken ?? 9999) >= 2000),
+    botResult.body.questions.map((q: any) => q.theirs?.msTaken),
+  );
+  check(
+    'invite code is withheld once the duel is no longer open',
+    botResult.body.inviteCode === null,
+  );
+
+  const secondBot = await call(`/matches/${botMatchId}/bot`, {
+    method: 'POST',
+    token: f.token,
+  });
+  check('a duel cannot be given two bots', secondBot.status === 409, secondBot.status);
+
+  console.log('\n-- push token registration --');
+  const pushOk = await call('/auth/push-token', {
+    method: 'POST',
+    token: f.token,
+    body: { token: 'ExponentPushToken[smoke-test-placeholder]', platform: 'android' },
+  });
+  check('push token registers', pushOk.status === 200, pushOk.body);
+  const pushBad = await call('/auth/push-token', {
+    method: 'POST',
+    token: f.token,
+    body: { token: 'short', platform: 'android' },
+  });
+  check('a malformed push token is rejected', pushBad.status === 400, pushBad.status);
+
   console.log(
     failures === 0
-      ? '\nALL CHECKS PASSED — Phase 2 exit gate met.\n'
+      ? '\nALL CHECKS PASSED — Phase 2 + 4 backend gates met.\n'
       : `\n${failures} CHECK(S) FAILED\n`,
   );
   await pg.end();
