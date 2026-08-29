@@ -7,7 +7,7 @@ import { hashPassword, verifyPassword } from '../auth/password.js';
 import { issueTokens, revokeAllForUser, rotateTokens } from '../auth/tokens.js';
 import { db } from '../db/index.js';
 import { accounts, users } from '../db/schema.js';
-import { badRequest, unauthorized } from '../lib/errors.js';
+import { badRequest, conflict, unauthorized } from '../lib/errors.js';
 import { send } from '../lib/respond.js';
 import {
   AuthResult,
@@ -15,9 +15,11 @@ import {
   MeResult,
   Ok,
   OAuthBody,
+  PublicUser,
   RefreshBody,
   SignupBody,
   TokenResult,
+  UsernameBody,
 } from '../schemas/index.js';
 import {
   createUser,
@@ -140,6 +142,33 @@ authRouter.post('/link/:provider', requireAuth, async (req, res, next) => {
       .onConflictDoNothing();
 
     send(res, Ok, { ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Lets a player replace the username derived from their email at signup.
+ * Apple Sign-In returns no reliable display name, so this is the only place a
+ * player ever names themselves.
+ */
+authRouter.post('/username', requireAuth, async (req, res, next) => {
+  try {
+    const userId = userIdOf(req);
+    const { username } = UsernameBody.parse(req.body);
+
+    const [taken] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.username, username))
+      .limit(1);
+
+    if (taken && taken.id !== userId) {
+      throw conflict('username_taken', 'That username is taken. Pick another.');
+    }
+
+    await db.update(users).set({ username }).where(eq(users.id, userId));
+    send(res, PublicUser, await publicUser(userId));
   } catch (e) {
     next(e);
   }

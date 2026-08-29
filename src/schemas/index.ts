@@ -68,6 +68,10 @@ export const RefreshBody = z.object({
   refreshToken: z.string().min(1),
 });
 
+export const UsernameBody = z.object({
+  username: Username,
+});
+
 export const AuthResult = z.object({
   accessToken: z.string(),
   refreshToken: z.string(),
