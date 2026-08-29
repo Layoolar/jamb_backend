@@ -9,14 +9,21 @@ import { Ok, ReportBody, SubjectList } from '../schemas/index.js';
 
 export const contentRouter = Router();
 
-/** Live question counts per subject — lets the app hide a subject with a thin bank. */
+/**
+ * Live question counts per subject, split by pool.
+ *
+ * The two pools are disjoint, so a subject can have enough questions to duel on
+ * but not to practise (or the reverse). The picker needs both numbers to know
+ * which subjects to offer for the mode the player chose.
+ */
 contentRouter.get('/subjects', async (_req, res, next) => {
   try {
     const rows = await db
       .select({
         slug: subjects.slug,
         name: subjects.name,
-        liveQuestions: raw<number>`count(${questions.id})::int`,
+        duelQuestions: raw<number>`count(*) filter (where ${questions.pool} = 'duel')::int`,
+        practiceQuestions: raw<number>`count(*) filter (where ${questions.pool} = 'practice')::int`,
       })
       .from(subjects)
       .leftJoin(

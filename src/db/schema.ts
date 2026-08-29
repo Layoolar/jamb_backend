@@ -35,6 +35,17 @@ export const questionStatus = pgEnum('question_status', [
  * equations later is a renderer change rather than a migration (PLAN §5).
  */
 export const contentFormat = pgEnum('content_format', ['plain', 'latex']);
+
+/**
+ * Which pool a question belongs to.
+ *
+ * The two pools MUST stay disjoint. Practice reveals the answer the moment you
+ * submit, so any question reachable from both pools turns practice into an
+ * answer-key oracle for duels — grind it in practice, then recognise it in a
+ * duel. There is deliberately no 'both' value: the type makes the overlap
+ * unrepresentable rather than relying on anyone remembering the rule.
+ */
+export const questionPool = pgEnum('question_pool', ['duel', 'practice']);
 export const matchMode = pgEnum('match_mode', ['duel', 'solo']);
 export const matchStatus = pgEnum('match_status', [
   'awaiting_opponent',
@@ -163,14 +174,27 @@ export const questions = pgTable(
     difficulty: integer('difficulty').notNull().default(2),
     topic: text('topic'),
     status: questionStatus('status').notNull().default('draft'),
+    /**
+     * Defaults to 'practice' — the safe side. A newly imported or generated
+     * question is never silently duel-eligible; promoting it is deliberate,
+     * the same way status starts at 'draft'.
+     */
+    pool: questionPool('pool').notNull().default('practice'),
     reportsCount: integer('reports_count').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (t) => [
-    // Drives random selection: filter to live + subject, then sample.
-    index('questions_pick_idx').on(t.subjectId, t.status, t.source),
+    // Drives random selection: filter to live + subject + pool, then sample.
+    index('questions_pick_idx').on(t.subjectId, t.status, t.pool, t.source),
+    /**
+     * Makes the disjoint-pool rule a database guarantee rather than a
+     * convention: a stem exists at most once, so it cannot be in both pools.
+     * Also catches the commonest import problem, since the same question
+     * circulates across several study sources.
+     */
+    uniqueIndex('questions_stem_key').on(t.stem),
   ],
 );
 

@@ -13,7 +13,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, sql as raw } from 'drizzle-orm';
 import { db, sql as pg } from '../src/db/index.js';
 import { matches, passwordResets, questions, users } from '../src/db/schema.js';
 
@@ -32,6 +32,25 @@ async function keyFor(questionId: string): Promise<number> {
     .limit(1);
   if (!q) throw new Error(`question ${questionId} not found`);
   return q.correctIndex;
+}
+
+/** Reads the fixed question list off a match, for pool-leak checks. */
+async function questionIdsOf(matchId: string): Promise<string[]> {
+  const [m] = await db
+    .select({ ids: matches.questionIds })
+    .from(matches)
+    .where(eq(matches.id, matchId))
+    .limit(1);
+  return m?.ids ?? [];
+}
+
+async function poolsOf(ids: string[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({ pool: questions.pool })
+    .from(questions)
+    .where(inArray(questions.id, ids));
+  return rows.map((r) => r.pool);
 }
 
 let failures = 0;
@@ -159,9 +178,9 @@ async function main() {
   const subjects = await call('/subjects');
   check('subjects are seeded', (subjects.body?.subjects?.length ?? 0) > 0);
   const withBank = (subjects.body?.subjects ?? []).find(
-    (s: any) => s.liveQuestions >= 10,
+    (s: any) => s.duelQuestions >= 10 && s.practiceQuestions >= 10,
   );
-  check('at least one subject has 10+ live questions', Boolean(withBank), subjects.body);
+  check('a subject has 10+ questions in BOTH pools', Boolean(withBank), subjects.body);
   if (!withBank) {
     console.error('\nRun `npm run seed` first.');
     process.exit(1);
@@ -383,6 +402,62 @@ async function main() {
     body: { token: 'short', platform: 'android' },
   });
   check('a malformed push token is rejected', pushBad.status === 400, pushBad.status);
+
+  console.log('\n-- the two question pools never leak into each other --');
+  {
+    const [overlap] = await db
+      .select({ n: raw<number>`count(*)::int` })
+      .from(questions)
+      .where(
+        raw`${questions.stem} in (
+          select stem from questions where pool = 'duel'
+          intersect
+          select stem from questions where pool = 'practice'
+        )`,
+      );
+    check(
+      'no stem exists in both pools',
+      (overlap?.n ?? 0) === 0,
+      { sharedStems: overlap?.n },
+    );
+
+    // The real test: play a duel and a practice round, then confirm the
+    // questions served came only from the matching pool. A leak here would let
+    // anyone grind a question in practice, where the answer is revealed on
+    // submit, then recognise it in a duel.
+    const leakUser = await signup('leak');
+
+    const leakDuel = await call('/matches', {
+      method: 'POST',
+      token: leakUser.token,
+      body: { subjectSlug: withBank.slug, mode: 'duel' },
+    });
+    const duelIds: string[] = await questionIdsOf(leakDuel.body.matchId);
+    const duelPools = await poolsOf(duelIds);
+    check(
+      'a duel serves ONLY duel-pool questions',
+      duelPools.every((p) => p === 'duel'),
+      { pools: [...new Set(duelPools)] },
+    );
+
+    const leakPractice = await call('/matches', {
+      method: 'POST',
+      token: leakUser.token,
+      body: { subjectSlug: withBank.slug, mode: 'solo' },
+    });
+    const practiceIds: string[] = await questionIdsOf(leakPractice.body.matchId);
+    const practicePools = await poolsOf(practiceIds);
+    check(
+      'practice serves ONLY practice-pool questions',
+      practicePools.every((p) => p === 'practice'),
+      { pools: [...new Set(practicePools)] },
+    );
+
+    check(
+      'a duel and a practice round share no questions',
+      duelIds.every((id) => !practiceIds.includes(id)),
+    );
+  }
 
   console.log('\n-- practice reveals immediately (a duel does not) --');
   const p = await signup('p');

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "questions_stem_key" ON "questions" USING btree ("stem");

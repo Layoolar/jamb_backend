@@ -250,7 +250,13 @@ export const MatchResult = z.object({
 
 export const SubjectList = z.object({
   subjects: z.array(
-    z.object({ slug: z.string(), name: z.string(), liveQuestions: z.number().int() }),
+    z.object({
+      slug: z.string(),
+      name: z.string(),
+      /** Counts are per-pool: a subject can be playable in one mode and not the other. */
+      duelQuestions: z.number().int(),
+      practiceQuestions: z.number().int(),
+    }),
   ),
 });
 

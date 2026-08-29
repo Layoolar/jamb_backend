@@ -14,8 +14,10 @@
  * A self-check is not a substitute for human review. It removes the obvious
  * failures so a person's attention goes to the subtle ones.
  *
- *   npm run generate:questions -- --subject english --count 20
+ *   npm run generate:questions -- --subject english --count 20 --pool duel
  *   npm run generate:questions -- --subject mathematics --count 20 --topic Indices
+ *
+ * --pool defaults to practice, the safe side.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -61,6 +63,7 @@ function parseArgs() {
     topic: get('topic'),
     count: Number(get('count') ?? 20),
     live: args.includes('--live'),
+    pool: (get('pool') === 'duel' ? 'duel' : 'practice') as 'duel' | 'practice',
   };
 }
 
@@ -167,7 +170,7 @@ async function mapLimit<T, R>(
 }
 
 async function main() {
-  const { subject: slug, topic, count, live } = parseArgs();
+  const { subject: slug, topic, count, live, pool } = parseArgs();
 
   if (!env.ANTHROPIC_API_KEY) {
     console.error(
@@ -177,7 +180,7 @@ async function main() {
   }
   if (!slug) {
     console.error(
-      'usage: npm run generate:questions -- --subject <slug> [--count 20] [--topic "..."] [--live]',
+      'usage: npm run generate:questions -- --subject <slug> [--count 20] [--topic "..."] [--pool duel|practice] [--live]',
     );
     process.exit(1);
   }
@@ -263,6 +266,7 @@ async function main() {
       topic: q.topic,
       contentFormat: 'plain',
       status: live ? 'live' : 'draft',
+      pool,
     });
     kept++;
   }

@@ -11,8 +11,12 @@
  * Imports land as status='draft'. Nothing reaches players until reviewed and
  * promoted, because a wrong answer key costs trust permanently.
  *
- *   npm run import -- content/english-2019.csv
- *   npm run import -- content/english-2019.csv --live    (skip review, use sparingly)
+ *   npm run import -- content/english-2019.csv --pool duel
+ *   npm run import -- content/english-2019.csv --pool practice --live
+ *
+ * --pool defaults to practice, the safe side: nothing becomes duel-eligible by
+ * accident. The two pools MUST stay disjoint (a unique index on stem enforces
+ * it), because practice reveals the answer on submit.
  */
 
 import { readFileSync } from 'node:fs';
@@ -81,9 +85,11 @@ async function main() {
   const args = process.argv.slice(2);
   const file = args.find((a) => !a.startsWith('--'));
   const goLive = args.includes('--live');
+  const poolArg = args.indexOf('--pool');
+  const pool = (poolArg >= 0 && args[poolArg + 1] === 'duel' ? 'duel' : 'practice') as 'duel' | 'practice';
 
   if (!file) {
-    console.error('usage: npm run import -- <file.csv> [--live]');
+    console.error('usage: npm run import -- <file.csv> [--pool duel|practice] [--live]');
     process.exit(1);
   }
 
@@ -173,6 +179,7 @@ async function main() {
         topic: get(r, 'topic') || null,
         contentFormat: 'plain',
         status: goLive ? 'live' : 'draft',
+        pool,
       });
       inserted++;
     } catch (e) {

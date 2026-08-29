@@ -63,16 +63,24 @@ async function resolveSubject(slug?: string) {
 
 /**
  * Picks the question set. Aims for 7 past-paper + 3 AI and backfills from
- * whichever pool has depth, so a thin AI bank does not block match creation.
+ * whichever source has depth, so a thin AI bank does not block match creation.
+ *
+ * `pool` is the hard boundary: a duel never draws a question that practice can
+ * reveal. Everything else here is a preference that degrades gracefully; this
+ * one does not degrade at all.
  */
-async function pickQuestionIds(subjectId: string | null): Promise<string[]> {
-  const pool = async (source: 'past' | 'ai', limit: number) => {
+async function pickQuestionIds(
+  subjectId: string | null,
+  pool: 'duel' | 'practice',
+): Promise<string[]> {
+  const draw = async (source: 'past' | 'ai', limit: number) => {
     const rows = await db
       .select({ id: questions.id })
       .from(questions)
       .where(
         and(
           eq(questions.status, 'live'),
+          eq(questions.pool, pool),
           eq(questions.source, source),
           subjectId ? eq(questions.subjectId, subjectId) : undefined,
         ),
@@ -82,8 +90,8 @@ async function pickQuestionIds(subjectId: string | null): Promise<string[]> {
     return rows.map((r) => r.id);
   };
 
-  const past = await pool('past', PAST_QUESTIONS_PER_MATCH);
-  const ai = await pool('ai', QUESTIONS_PER_MATCH - PAST_QUESTIONS_PER_MATCH);
+  const past = await draw('past', PAST_QUESTIONS_PER_MATCH);
+  const ai = await draw('ai', QUESTIONS_PER_MATCH - PAST_QUESTIONS_PER_MATCH);
 
   let picked = [...past, ...ai];
 
@@ -91,7 +99,7 @@ async function pickQuestionIds(subjectId: string | null): Promise<string[]> {
     const short = QUESTIONS_PER_MATCH - picked.length;
     const seen = new Set(picked);
     // Over-fetch, then filter, since SQL-side NOT IN with a big list is clumsy.
-    const extra = [...(await pool('past', short * 4)), ...(await pool('ai', short * 4))];
+    const extra = [...(await draw('past', short * 4)), ...(await draw('ai', short * 4))];
     for (const id of extra) {
       if (picked.length >= QUESTIONS_PER_MATCH) break;
       if (!seen.has(id)) {
@@ -104,7 +112,7 @@ async function pickQuestionIds(subjectId: string | null): Promise<string[]> {
   if (picked.length < QUESTIONS_PER_MATCH) {
     throw badRequest(
       'not_enough_questions',
-      `Only ${picked.length} live questions available for this subject. Need ${QUESTIONS_PER_MATCH}.`,
+      `Only ${picked.length} live ${pool} questions available for this subject. Need ${QUESTIONS_PER_MATCH}.`,
     );
   }
 
@@ -153,7 +161,10 @@ export async function createMatch(
   }
 
   const subject = await resolveSubject(opts.subjectSlug);
-  const questionIds = await pickQuestionIds(subject?.id ?? null);
+  const questionIds = await pickQuestionIds(
+    subject?.id ?? null,
+    opts.mode === 'solo' ? 'practice' : 'duel',
+  );
 
   const [match] = await db
     .insert(matches)
