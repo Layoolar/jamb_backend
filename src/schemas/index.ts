@@ -81,6 +81,16 @@ export const ResetBody = z.object({
   password: Password,
 });
 
+/**
+ * `currentPassword` is required only when the account already has one. An
+ * account created through Google or Apple has no password yet, so this is also
+ * how such a user sets their first one.
+ */
+export const ChangePasswordBody = z.object({
+  currentPassword: z.string().min(1).optional(),
+  newPassword: Password,
+});
+
 export const PushTokenBody = z.object({
   token: z.string().min(10).max(256),
   platform: z.enum(['ios', 'android']),

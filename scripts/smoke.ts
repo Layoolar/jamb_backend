@@ -96,7 +96,11 @@ async function signup(tag: string) {
     body: { email, password: 'correct-horse-battery' },
   });
   if (r.status !== 201) throw new Error(`signup failed: ${JSON.stringify(r.body)}`);
-  return { token: r.body.accessToken as string, user: r.body.user };
+  return {
+    token: r.body.accessToken as string,
+    refreshToken: r.body.refreshToken as string,
+    user: r.body.user,
+  };
 }
 
 /** Plays through a match, answering correctly when `correct` is true. */
@@ -574,6 +578,60 @@ async function main() {
     solo1.status === 201 && solo2.status === 201,
     { solo1: solo1.status, solo2: solo2.status },
   );
+
+  console.log('\n-- change password while signed in --');
+  {
+    const cp = await signup('changepw');
+
+    const wrongCurrent = await call('/auth/password/change', {
+      method: 'POST',
+      token: cp.token,
+      body: { currentPassword: 'not-my-password', newPassword: 'a-brand-new-one' },
+    });
+    check('the wrong current password is rejected', wrongCurrent.status === 400, wrongCurrent.body);
+
+    const missingCurrent = await call('/auth/password/change', {
+      method: 'POST',
+      token: cp.token,
+      body: { newPassword: 'a-brand-new-one' },
+    });
+    check(
+      'omitting the current password is rejected when one is set',
+      missingCurrent.status === 400,
+      missingCurrent.body,
+    );
+
+    const changed = await call('/auth/password/change', {
+      method: 'POST',
+      token: cp.token,
+      body: {
+        currentPassword: 'correct-horse-battery',
+        newPassword: 'a-brand-new-one',
+      },
+    });
+    check('the password changes', changed.status === 200, changed.body);
+    check(
+      'a fresh token pair comes back, so this device stays signed in',
+      typeof changed.body?.accessToken === 'string' &&
+        typeof changed.body?.refreshToken === 'string',
+      Object.keys(changed.body ?? {}),
+    );
+
+    const withNewToken = await call('/auth/me', { token: changed.body.accessToken });
+    check('the returned token works', withNewToken.status === 200, withNewToken.status);
+
+    // The pre-change refresh token must be dead — that is the point of revoking
+    // every session when a password changes.
+    const oldRefresh = await call('/auth/refresh', {
+      method: 'POST',
+      body: { refreshToken: cp.refreshToken },
+    });
+    check(
+      'the old refresh token is revoked (other devices signed out)',
+      oldRefresh.status === 401,
+      oldRefresh.status,
+    );
+  }
 
   console.log('\n-- password reset --');
   const resetEmail = `smoke_reset_${Date.now()}@example.test`;

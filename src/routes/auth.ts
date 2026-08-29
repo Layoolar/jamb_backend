@@ -15,6 +15,7 @@ import { resetEmail, sendMail } from '../services/email.js';
 import { registerPushToken } from '../services/push.js';
 import {
   AuthResult,
+  ChangePasswordBody,
   ForgotBody,
   LoginBody,
   MeResult,
@@ -256,6 +257,48 @@ authRouter.post('/password/reset', strict, async (req, res, next) => {
     await revokeAllForUser(row.userId);
 
     send(res, Ok, { ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Changes the password of the signed-in user.
+ *
+ * Every other session is revoked and this device is handed a fresh pair. If
+ * someone changes their password because they think an account is compromised,
+ * leaving the intruder signed in would defeat the point — but signing the user
+ * out of the device they are actively holding is just hostile.
+ */
+authRouter.post('/password/change', requireAuth, strict, async (req, res, next) => {
+  try {
+    const userId = userIdOf(req);
+    const { currentPassword, newPassword } = ChangePasswordBody.parse(req.body);
+
+    const [user] = await db
+      .select({ passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) throw unauthorized('no_account', 'That account no longer exists.');
+
+    if (user.passwordHash) {
+      if (!currentPassword) {
+        throw badRequest('current_password_required', 'Enter your current password.');
+      }
+      if (!(await verifyPassword(user.passwordHash, currentPassword))) {
+        throw badRequest('bad_current_password', 'That is not your current password.');
+      }
+    }
+
+    await db
+      .update(users)
+      .set({ passwordHash: await hashPassword(newPassword) })
+      .where(eq(users.id, userId));
+
+    await revokeAllForUser(userId);
+    send(res, TokenResult, await issueTokens(userId));
   } catch (e) {
     next(e);
   }
