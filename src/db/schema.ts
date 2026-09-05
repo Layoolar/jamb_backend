@@ -350,6 +350,82 @@ export const userStats = pgTable('user_stats', {
   duelsPlayed: integer('duels_played').notNull().default(0),
 });
 
+// -------------------------------------------------------------- moderation
+
+/**
+ * Blocks and reports (App Store 1.2).
+ *
+ * A username is the one piece of user-authored text another player sees, which
+ * is enough to make this a UGC surface: Apple expects a way to report it and a
+ * way to never be paired with that person again.
+ *
+ * These are separate tables on purpose. A report is a signal to us and must
+ * survive for review; a block is the user's own setting and is theirs to undo.
+ * Folding them together would mean unblocking quietly destroys the evidence.
+ */
+export const userBlocks = pgTable(
+  'user_blocks',
+  {
+    blockerId: uuid('blocker_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    blockedId: uuid('blocked_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.blockerId, t.blockedId] }),
+    // Matchmaking asks "who blocked me?" as often as "who did I block?".
+    index('user_blocks_blocked_idx').on(t.blockedId),
+  ],
+);
+
+export const userReportReason = pgEnum('user_report_reason', [
+  'offensive_username',
+  'harassment',
+  'cheating',
+  'other',
+]);
+
+export const userReports = pgTable(
+  'user_reports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    reporterId: uuid('reporter_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    reportedId: uuid('reported_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Kept if the match is later cleaned up — the report still matters. */
+    matchId: uuid('match_id').references(() => matches.id, {
+      onDelete: 'set null',
+    }),
+    reason: userReportReason('reason').notNull(),
+    detail: text('detail'),
+    /** The username as it read when reported; renaming must not erase it. */
+    reportedUsername: text('reported_username').notNull(),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    /**
+     * One report per person, not per match. Filing a report also blocks, so the
+     * pair can never be matched again and a second report has nothing to
+     * describe. Keeping matchId out of the key also dodges the NULL trap: in
+     * Postgres NULLs are distinct, so a report sent without a matchId would
+     * slip past a three-column constraint every time.
+     */
+    uniqueIndex('user_reports_unique').on(t.reporterId, t.reportedId),
+    index('user_reports_open_idx').on(t.reviewedAt),
+  ],
+);
+
 // ---------------------------------------------------------------- relations
 
 export const usersRelations = relations(users, ({ many, one }) => ({

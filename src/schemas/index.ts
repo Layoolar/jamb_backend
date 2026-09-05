@@ -288,4 +288,16 @@ export const ReportBody = z.object({
   reason: z.string().trim().min(3).max(500),
 });
 
+// ------------------------------------------------------------- moderation
+
+export const ReportUserBody = z.object({
+  reason: z.enum(['offensive_username', 'harassment', 'cheating', 'other']),
+  matchId: Uuid.optional(),
+  detail: z.string().trim().max(500).optional(),
+});
+
+export const BlockedList = z.object({
+  blocked: z.array(PublicUser),
+});
+
 export const Ok = z.object({ ok: z.literal(true) });

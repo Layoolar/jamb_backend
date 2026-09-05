@@ -25,6 +25,7 @@ import {
   users,
 } from '../db/schema.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { blockedPairSql } from './moderation.js';
 import {
   MATCH_TTL_MS,
   MAX_STRIKES,
@@ -212,6 +213,9 @@ export async function joinMatch(
             : undefined,
           !opts.inviteCode && subject ? eq(matches.subjectId, subject.id) : undefined,
           raw`${matches.expiresAt} > now()`,
+          // A block has to reach matchmaking or it is decoration (App Store 1.2).
+          // Applied to invite codes too: a code is not consent to be paired.
+          blockedPairSql(userId, matches.createdBy),
         ),
       )
       .orderBy(asc(matches.createdAt))

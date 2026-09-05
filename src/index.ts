@@ -13,6 +13,7 @@ import { AppError } from './lib/errors.js';
 import { authRouter } from './routes/auth.js';
 import { matchRouter } from './routes/matches.js';
 import { contentRouter } from './routes/questions.js';
+import { userRouter } from './routes/users.js';
 import { startCron } from './cron.js';
 
 const app = express();
@@ -47,6 +48,7 @@ app.get('/health', async (_req, res) => {
 
 app.use('/auth', authRouter);
 app.use('/matches', matchRouter);
+app.use('/users', userRouter);
 app.use('/', contentRouter);
 
 app.use((_req, res) => {
